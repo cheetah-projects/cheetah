@@ -1,70 +1,34 @@
 import 'dart:io';
-import 'dart:async';
-import 'package:cheetah/types.dart';
+import 'package:cheetah/database.dart';
 import 'package:cheetah/handler.dart';
+import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as io;
+import 'package:shelf_router/shelf_router.dart';
 
 class Cheetah {
-  final RequestHandler _requestHandler = RequestHandler();
-  HttpServer? _server;
-  Timer? _reloadDebounce;
+  final String dbUrl;
+  final String dbName;
+  final Map<String, Map<String, dynamic>> domain;
 
-  void use(Middleware middleware) {
-    _requestHandler.use(middleware);
-  }
+  Cheetah({
+    required this.dbUrl,
+    required this.dbName,
+    required this.domain,
+  });
 
-  void get(String path, Middleware handler) {
-    _requestHandler.addRoute('GET', path, handler);
-  }
+  Future<void> run() async {
+    await initDatabase(dbUrl, dbName);
 
-  void post(String path, Middleware handler) {
-    _requestHandler.addRoute('POST', path, handler);
-  }
+    final router = Router();
 
-  void setErrorHandler(Middleware handler) {
-    _requestHandler.setErrorHandler(handler);
-  }
-
-  Future<void> _startServer(
-      {String host = 'localhost', int port = 8080}) async {
-    if (_server != null) {
-      await _server!.close();
+    for (String modelName in domain.keys) {
+      generateCrudRoutes(router, modelName, domain[modelName]!);
     }
 
-    _server = await HttpServer.bind(host, port);
-    print('Cheetah server running at http://$host:$port');
+    Handler handler =
+        Pipeline().addMiddleware(logRequests()).addHandler(router.call);
 
-    await for (HttpRequest request in _server!) {
-      await _requestHandler.handleRequest(request);
-    }
-  }
-
-  void _watchForChanges(void Function() onFileChange) {
-    final Directory dir = Directory.current;
-
-    dir.watch(recursive: true).listen((event) {
-      if (event is FileSystemModifyEvent) {
-        if (_reloadDebounce?.isActive ?? false) _reloadDebounce!.cancel();
-        _reloadDebounce = Timer(Duration(milliseconds: 500), onFileChange);
-      }
-    });
-  }
-
-  Future<void> listen({
-    String host = 'localhost',
-    int port = 8080,
-    bool enableHotReload = false,
-  }) async {
-    print("Starting the server...");
-    _startServer(host: host, port: port);
-
-    if (enableHotReload) {
-      print('Hot reload enabled. Watching for file changes...');
-      _watchForChanges(() async {
-        print('File change detected. Reloading server...');
-        await _startServer(host: host, port: port);
-      });
-    }
-
-    print("Server is running.");
+    await io.serve(handler, InternetAddress.anyIPv4, 8080);
+    print('Server listening on port 8080');
   }
 }

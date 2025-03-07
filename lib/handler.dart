@@ -1,63 +1,54 @@
-import 'dart:io';
-import 'dart:async';
-import 'package:collection/collection.dart';
+import 'package:cheetah/database.dart';
+import 'package:shelf/shelf.dart';
+import 'package:shelf_router/shelf_router.dart';
 
-import 'package:cheetah/types.dart';
-import 'package:cheetah/router.dart';
-import 'package:cheetah/middleware.dart';
+void generateCrudRoutes(
+    Router router, String modelName, Map<String, dynamic> schema) {
+  router.post('/$modelName', (Request request) async {
+    return await createItem(modelName, await request.readAsString());
+  });
 
-class RequestHandler {
-  final List<Route> _routes = [];
-  final MiddlewareManager _middlewareManager = MiddlewareManager();
+  router.get('/$modelName', (Request request) async {
+    return await getAllItems(modelName);
+  });
 
-  Middleware? _errorHandler;
+  router.get('/$modelName/<id>', (Request request) async {
+    final id = request.params['id']!;
+    return await getItemById(modelName, id);
+  });
 
-  void use(Middleware middleware) {
-    _middlewareManager.use(middleware);
-  }
+  router.put('/$modelName/<id>', (Request request) async {
+    final id = request.params['id']!;
+    return await updateItem(modelName, id, await request.readAsString());
+  });
 
-  void addRoute(String method, String path, Middleware handler) {
-    _routes.add(Route(path, method, handler));
-  }
+  router.delete('/$modelName/<id>', (Request request) async {
+    final id = request.params['id']!;
+    return await deleteItem(modelName, id);
+  });
+}
 
-  Future<void> handleRequest(HttpRequest request) async {
-    try {
-      final path = request.uri.path;
-      final method = request.method;
+Future<Response> createItem(String modelName, String data) async {
+  await saveToDatabase(modelName, data);
+  return Response.ok('Created $modelName');
+}
 
-      final queryParams = request.uri.queryParameters;
+Future<Response> getAllItems(String modelName) async {
+  var items = await getFromDatabase(modelName);
+  return Response.ok(items);
+}
 
-      Route? route = _routes.firstWhereOrNull(
-        (r) => r.matches(path) && r.method == method,
-      );
+Future<Response> getItemById(String modelName, String id) async {
+  var item = await getFromDatabaseById(modelName, id);
+  return Response.ok(item);
+}
 
-      if (route != null) {
-        await _middlewareManager.execute(request, request.response);
+Future<Response> updateItem(String modelName, String id, String data) async {
+  await updateInDatabase(modelName, id, data);
+  return Response.ok('Updated $modelName');
+}
 
-        final params = route.extractParams(path);
-        request.response.headers.add('X-Params', params.toString());
-
-        await route.handler(
-            request, request.response, () async {}, queryParams);
-      } else {
-        request.response
-          ..statusCode = HttpStatus.notFound
-          ..write('404 Not Found')
-          ..close();
-      }
-    } catch (e) {
-      if (_errorHandler != null) {
-        await _errorHandler!(request, request.response, () async {});
-      } else {
-        request.response
-          ..statusCode = HttpStatus.internalServerError
-          ..write('500 Internal Server Error: $e')
-          ..close();
-      }
-    }
-  }
-
-  void setErrorHandler(Middleware handler) {
-    _errorHandler = handler;
-  }
+Future<Response> deleteItem(String modelName, String id) async {
+  await deleteFromDatabase(modelName, id);
+  return Response.ok('Deleted $modelName');
 }
